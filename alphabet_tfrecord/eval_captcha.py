@@ -11,13 +11,13 @@ from gen_captcha import alphabet
 from gen_captcha import ALPHABET  
 import os
 import sys
-import argparse # argparse是python用于解析命令行参数和选项的标准模块，用于代替已经过时的optparse模块。
+#import argparse # argparse是python用于解析命令行参数和选项的标准模块，用于代替已经过时的optparse模块。
 from os import listdir
 import os.path
 import matplotlib.pyplot as plt
 from PIL import Image
 from PIL import ImageFilter,ImageEnhance
-import time
+#import time
 import random
 from datetime import datetime
 import numpy as np  
@@ -43,7 +43,7 @@ def crack_captcha():
 #   
         saver = tf.train.Saver()  
         with tf.Session() as sess:  
-            saver.restore(sess,"./logs/model.ckpt-110000")  
+            saver.restore(sess,"./logs/model.ckpt-300000")  
        
             predict = tf.argmax(tf.reshape(logits, [-1, mynet.MAX_CAPTCHA, mynet.CHAR_SET_LEN]), 2)  
             
@@ -72,7 +72,7 @@ def crack_captcha():
                     hint="False"
                     false_mun+=1        
                 print("正确: {}  预测: {} check:{}".format(text[0], text_pre,hint))
-            print("accuracy:%.4f"%(ture_mun/(ture_mun+false_mun)))
+            print("accuracy:%.4f%%"%(ture_mun*100/(ture_mun+false_mun)))
          
    
 
