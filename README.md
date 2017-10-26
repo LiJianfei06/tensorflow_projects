@@ -1,1 +1,1 @@
-# tensorflow_projects
+alphabet_tfrecord: 识别62个字符（0~9，a~z，A~Z）  支持tfrecord;支持saver 断电续训练
