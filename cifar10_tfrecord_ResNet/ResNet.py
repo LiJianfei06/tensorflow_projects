@@ -69,23 +69,21 @@ def subsample(inputs, stride, num_outputs,is_training=True,keep_prob=1.0,scope=N
 
 
 
-
 """
 创建一个卷积层  
 """
 def conv2d_same(inputs, num_outputs, kernel_size, stride, scope=None): 
+  return slim.conv2d(inputs, num_outputs, kernel_size, stride=stride,padding='SAME', scope=scope)
   if stride == 1:
     return slim.conv2d(inputs, num_outputs, kernel_size, stride=1,
-                       #normalizer_fn=None, activation_fn=None,
                        padding='SAME', scope=scope)
-  else: # 如果不为1，则显式的pad zero，pad zero总数为kernel_size - 1
+  else:                             # 如果不为1，则显式的pad zero，pad zero总数为kernel_size - 1
     #kernel_size_effective = kernel_size + (kernel_size - 1) * (rate - 1)
     pad_total = kernel_size - 1
     pad_beg = pad_total // 2
     pad_end = pad_total - pad_beg
     inputs = tf.pad(inputs, # 对输入变量进行补零操作
                     [[0, 0], [pad_beg, pad_end], [pad_beg, pad_end], [0, 0]])
-    # 因为已经进行了zero padding，所以只需再使用一个padding模式为VALID的slim.conv2d创建这个卷积层
     return slim.conv2d(inputs, num_outputs, kernel_size, stride=stride,
                        #normalizer_fn=None, activation_fn=None,
                        padding='VALID', scope=scope)
@@ -162,54 +160,6 @@ def resnet_arg_scope(is_training=True, # 训练标记
         return arg_sc # 最后将基层嵌套的arg_scope作为结果返回
 
 
-
-# 定义核心的bottleneck残差学习单元
-@slim.add_arg_scope
-def bottleneck(inputs, depth, depth_bottleneck, stride,
-               outputs_collections=None, scope=None,is_training=True):
-  """
-  Args:
-    inputs: A tensor of size [batch, height, width, channels].
-    depth、depth_bottleneck:、stride三个参数是前面blocks类中的args
-    rate: An integer, rate for atrous convolution.
-    outputs_collections: 是收集end_points的collection
-    scope: 是这个unit的名称。
-  """
-  with tf.variable_scope(scope, 'bottleneck_v2', [inputs]) as sc: # slim.utils.last_dimension获取输入的最后一个维度，即输出通道数。
-    depth_in = slim.utils.last_dimension(inputs.get_shape(), min_rank=4) # 可以限定最少为四个维度
-    # 使用slim.batch_norm对输入进行batch normalization，并使用relu函数进行预激活preactivate
-    preact = slim.batch_norm(inputs, is_training=is_training, activation_fn=tf.nn.relu, scope='preact') 
-
-    if depth == depth_in:
-      shortcut = subsample(inputs, stride,depth,'shortcut')  #############
-      # 如果残差单元的输入通道数和输出通道数一致，那么按步长对inputs进行降采样
-    else:
-      shortcut = slim.conv2d(preact, depth, [1, 1], stride=stride,
-                             normalizer_fn=None, activation_fn=None,
-                             scope='shortcut')
-      # 如果不一样就按步长和1*1的卷积改变其通道数，使得输入、输出通道数一致
-
-    # 先是一个1*1尺寸，步长1，输出通道数为depth_bottleneck的卷积
-    residual = slim.conv2d(preact, depth_bottleneck, [1, 1], stride=1,
-                           scope='conv1')
-    print "residual:",residual
-    # 然后是3*3尺寸，步长为stride，输出通道数为depth_bottleneck的卷积
-    residual = conv2d_same(residual, depth_bottleneck, 3, stride,
-                                        scope='conv2')
-    print "residual:",residual
-
-    # 最后是1*1卷积，步长1，输出通道数depth的卷积，得到最终的residual。最后一层没有正则项也没有激活函数
-    residual = slim.conv2d(residual, depth, [1, 1], stride=1,
-                           normalizer_fn=None, activation_fn=None,
-                           scope='conv3')
-    print "residual:",residual
-
-    output = shortcut + residual # 将降采样的结果和residual相加
-
-    return slim.utils.collect_named_outputs(outputs_collections, # 将output添加进collection并返回output作为函数结果
-                                            sc.name,
-                                            output)
-
 @slim.add_arg_scope
 def bottleneck1(inputs, depth, depth_bottleneck, stride,
                outputs_collections=None, scope=None,is_training=True,keep_prob=1.0):
@@ -228,16 +178,12 @@ def bottleneck1(inputs, depth, depth_bottleneck, stride,
 
     # 先是一个1*1尺寸，步长1，输出通道数为depth_bottleneck的卷积
     # 然后是3*3尺寸，步长为stride，输出通道数为depth_bottleneck的卷积
-    residual = conv2d_same(inputs, depth_bottleneck, 3, stride,
-                           #normalizer_fn=None, activation_fn=None,
-                                        scope='conv1')
+    residual = slim.conv2d(inputs, depth_bottleneck, 3, stride=stride,padding='SAME', scope='conv1')
     print "residual:",residual
     tf.summary.histogram('conv1', residual)
 
     # 最后是1*1卷积，步长1，输出通道数depth的卷积，得到最终的residual。最后一层没有正则项也没有激活函数
-    residual = conv2d_same(residual, depth, 3, stride=1,
-                           #normalizer_fn=None, activation_fn=None,
-                                        scope='conv2')
+    residual = slim.conv2d(residual, depth, 3, stride=1,padding='SAME', scope='conv2')
     print "residual:",residual
     tf.summary.histogram('conv2', residual)
 
@@ -261,8 +207,7 @@ def resnet_v2(inputs, # A tensor of size [batch, height_in, width_in, channels].
               keep_prob=1.0): 
   # 在函数体先定义好variable_scope和end_points_collection
   with tf.variable_scope(scope, 'resnet_v2', [inputs], reuse=reuse) as sc:
-    end_points_collection = sc.original_name_scope + '_end_points' # 定义end_points_collection
-    print "end_points_collection:",end_points_collection
+    end_points_collection = sc.original_name_scope + 'end_points' # 定义end_points_collection
     #sys.exit()
     with slim.arg_scope([slim.conv2d, bottleneck1,          # bottleneck1bottleneck1bottleneck1bottleneck1
                          stack_blocks_dense],
@@ -274,15 +219,13 @@ def resnet_v2(inputs, # A tensor of size [batch, height_in, width_in, channels].
         with slim.arg_scope([slim.conv2d],
                             #activation_fn=None, normalizer_fn=None
                             ):
-          net = conv2d_same(net, 16, 3, stride=1, scope='conv1') # 创建resnet最前面的64输出通道的步长为2的7*7卷积
+          net = slim.conv2d(net, 16, 3, stride=1,padding='SAME', scope='conv1')
           
       net = stack_blocks_dense(net, blocks,is_training=is_training,keep_prob=keep_prob) # 将残差学习模块组生成好
-      print "net:",net
 
       if global_pool: # 根据标记添加全局平均池化层
-        #net = tf.reduce_mean(net, [1, 2], name='pool5', keep_dims=True) # tf.reduce_mean实现全局平均池化效率比avg_pool高
         net=slim.avg_pool2d(net, [np.shape(net)[1], np.shape(net)[2]], stride=1, scope='pool5')
-        print 'pool5',net
+        print 'Avg_pool:',net
       if num_classes is not None:  # 是否有通道数
         net = slim.conv2d(net, num_classes, [1, 1], activation_fn=None, # 无激活函数和正则项
                           #normalizer_fn=None,
@@ -294,14 +237,18 @@ def resnet_v2(inputs, # A tensor of size [batch, height_in, width_in, channels].
       end_points = slim.utils.convert_collection_to_dict(end_points_collection) # 将collection转化为python的dict
       if num_classes is not None:
         end_points['predictions'] = slim.softmax(net, scope='predictions') # 输出网络结果
-        #print "net:",net
-        #print "end_points['predictions']:",end_points['predictions']
+        print "net:",net
+        print "end_points['predictions']:",end_points['predictions']
       return net, end_points
 #------------------------------ResNet的生成函数定义好了----------------------------------------
       
 
 
 
+"""
+  ResNet-20  
+  for cifar10
+"""
 def resnet_20(inputs, # 图像尺寸缩小了32倍
                  num_classes=None,
                  global_pool=True,
@@ -315,104 +262,103 @@ def resnet_20(inputs, # 图像尺寸缩小了32倍
       Block('block2', bottleneck1, [(32, 32, 2)] * 1 + [(32, 32, 1)]*2),
       Block('block3', bottleneck1, [(64, 64, 2)] * 1 + [(64, 64, 1)]*2),
       ]
-  print "blocks:",blocks
-  #sys.exit()
+  #print "blocks:",blocks
   return resnet_v2(inputs, blocks, num_classes, global_pool,
                    include_root_block=True, reuse=reuse, scope=scope,is_training=is_training,keep_prob=keep_prob)
 
 
 
-def resnet_v2_50(inputs, # 图像尺寸缩小了32倍
-                 num_classes=None,
-                 global_pool=True,
-                 reuse=None, # 是否重用
-                 is_training=True,
-                 scope='resnet_v2_50'):
-  blocks = [
-      Block('block1', bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
-
-
-
-      # Args:：
-      # 'block1'：Block名称（或scope）
-      # bottleneck：ResNet V2残差学习单元
-      # [(256, 64, 1)] * 2 + [(256, 64, 2)]：Block的Args，Args是一个列表。其中每个元素都对应一个bottleneck
-      #                                     前两个元素都是(256, 64, 1)，最后一个是(256, 64, 2）。每个元素
-      #                                     都是一个三元tuple，即（depth，depth_bottleneck，stride）。
-      # (256, 64, 3)代表构建的bottleneck残差学习单元（每个残差学习单元包含三个卷积层）中，第三层输出通道数
-      # depth为256，前两层输出通道数depth_bottleneck为64，且中间那层步长3。这个残差学习单元结构为：
-      # [(1*1/s1,64),(3*3/s2,64),(1*1/s1,256)]
-
-
-
-      Block(
-          'block2', bottleneck, [(512, 128, 1)] * 3 + [(512, 128, 2)]),
-      Block(
-          'block3', bottleneck, [(1024, 256, 1)] * 5 + [(1024, 256, 2)]),
-      Block(
-          'block4', bottleneck, [(2048, 512, 1)] * 3)]
-  #print "blocks:",blocks
-  return resnet_v2(inputs, blocks, num_classes, global_pool,
-                   include_root_block=True, reuse=reuse, scope=scope,is_training=is_training)
-
-
-def resnet_v2_101(inputs, # unit提升的主要场所是block3
-                  num_classes=None,
-                  global_pool=True,
-                  reuse=None,
-                  scope='resnet_v2_101'):
-  """ResNet-101 model of [1]. See resnet_v2() for arg and return description."""
-  blocks = [
-      Block(
-          'block1', bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
-      Block(
-          'block2', bottleneck, [(512, 128, 1)] * 3 + [(512, 128, 2)]),
-      Block(
-          'block3', bottleneck, [(1024, 256, 1)] * 22 + [(1024, 256, 2)]),
-      Block(
-          'block4', bottleneck, [(2048, 512, 1)] * 3)]
-  return resnet_v2(inputs, blocks, num_classes, global_pool,
-                   include_root_block=False, reuse=reuse, scope=scope)
-
-
-def resnet_v2_152(inputs, # unit提升的主要场所是block3
-                  num_classes=None,
-                  global_pool=True,
-                  reuse=None,
-                  scope='resnet_v2_152'):
-  """ResNet-152 model of [1]. See resnet_v2() for arg and return description."""
-  blocks = [
-      Block(
-          'block1', bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
-      Block(
-          'block2', bottleneck, [(512, 128, 1)] * 7 + [(512, 128, 2)]),
-      Block(
-          'block3', bottleneck, [(1024, 256, 1)] * 35 + [(1024, 256, 2)]),
-      Block(
-          'block4', bottleneck, [(2048, 512, 1)] * 3)]
-  return resnet_v2(inputs, blocks, num_classes, global_pool,
-                   include_root_block=True, reuse=reuse, scope=scope)
-
-
-def resnet_v2_200(inputs, # unit提升的主要场所是block2
-                  num_classes=None,
-                  global_pool=True,
-                  reuse=None,
-                  scope='resnet_v2_200'):
-  """ResNet-200 model of [2]. See resnet_v2() for arg and return description."""
-  blocks = [
-      Block(
-          'block1', bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
-      Block(
-          'block2', bottleneck, [(512, 128, 1)] * 23 + [(512, 128, 2)]),
-      Block(
-          'block3', bottleneck, [(1024, 256, 1)] * 35 + [(1024, 256, 2)]),
-      Block(
-          'block4', bottleneck, [(2048, 512, 1)] * 3)]
-  return resnet_v2(inputs, blocks, num_classes, global_pool,
-                   include_root_block=True, reuse=reuse, scope=scope)
-
-
+#def resnet_v2_50(inputs, # 图像尺寸缩小了32倍
+#                 num_classes=None,
+#                 global_pool=True,
+#                 reuse=None, # 是否重用
+#                 is_training=True,
+#                 scope='resnet_v2_50'):
+#  blocks = [
+#      Block('block1', bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
+#
+#
+#
+#      # Args:：
+#      # 'block1'：Block名称（或scope）
+#      # bottleneck：ResNet V2残差学习单元
+#      # [(256, 64, 1)] * 2 + [(256, 64, 2)]：Block的Args，Args是一个列表。其中每个元素都对应一个bottleneck
+#      #                                     前两个元素都是(256, 64, 1)，最后一个是(256, 64, 2）。每个元素
+#      #                                     都是一个三元tuple，即（depth，depth_bottleneck，stride）。
+#      # (256, 64, 3)代表构建的bottleneck残差学习单元（每个残差学习单元包含三个卷积层）中，第三层输出通道数
+#      # depth为256，前两层输出通道数depth_bottleneck为64，且中间那层步长3。这个残差学习单元结构为：
+#      # [(1*1/s1,64),(3*3/s2,64),(1*1/s1,256)]
+#
+#
+#
+#      Block(
+#          'block2', bottleneck, [(512, 128, 1)] * 3 + [(512, 128, 2)]),
+#      Block(
+#          'block3', bottleneck, [(1024, 256, 1)] * 5 + [(1024, 256, 2)]),
+#      Block(
+#          'block4', bottleneck, [(2048, 512, 1)] * 3)]
+#  #print "blocks:",blocks
+#  return resnet_v2(inputs, blocks, num_classes, global_pool,
+#                   include_root_block=True, reuse=reuse, scope=scope,is_training=is_training)
+#
+#
+#def resnet_v2_101(inputs, # unit提升的主要场所是block3
+#                  num_classes=None,
+#                  global_pool=True,
+#                  reuse=None,
+#                  scope='resnet_v2_101'):
+#  """ResNet-101 model of [1]. See resnet_v2() for arg and return description."""
+#  blocks = [
+#      Block(
+#          'block1', bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
+#      Block(
+#          'block2', bottleneck, [(512, 128, 1)] * 3 + [(512, 128, 2)]),
+#      Block(
+#          'block3', bottleneck, [(1024, 256, 1)] * 22 + [(1024, 256, 2)]),
+#      Block(
+#          'block4', bottleneck, [(2048, 512, 1)] * 3)]
+#  return resnet_v2(inputs, blocks, num_classes, global_pool,
+#                   include_root_block=False, reuse=reuse, scope=scope)
+#
+#
+#def resnet_v2_152(inputs, # unit提升的主要场所是block3
+#                  num_classes=None,
+#                  global_pool=True,
+#                  reuse=None,
+#                  scope='resnet_v2_152'):
+#  """ResNet-152 model of [1]. See resnet_v2() for arg and return description."""
+#  blocks = [
+#      Block(
+#          'block1', bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
+#      Block(
+#          'block2', bottleneck, [(512, 128, 1)] * 7 + [(512, 128, 2)]),
+#      Block(
+#          'block3', bottleneck, [(1024, 256, 1)] * 35 + [(1024, 256, 2)]),
+#      Block(
+#          'block4', bottleneck, [(2048, 512, 1)] * 3)]
+#  return resnet_v2(inputs, blocks, num_classes, global_pool,
+#                   include_root_block=True, reuse=reuse, scope=scope)
+#
+#
+#def resnet_v2_200(inputs, # unit提升的主要场所是block2
+#                  num_classes=None,
+#                  global_pool=True,
+#                  reuse=None,
+#                  scope='resnet_v2_200'):
+#  """ResNet-200 model of [2]. See resnet_v2() for arg and return description."""
+#  blocks = [
+#      Block(
+#          'block1', bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
+#      Block(
+#          'block2', bottleneck, [(512, 128, 1)] * 23 + [(512, 128, 2)]),
+#      Block(
+#          'block3', bottleneck, [(1024, 256, 1)] * 35 + [(1024, 256, 2)]),
+#      Block(
+#          'block4', bottleneck, [(2048, 512, 1)] * 3)]
+#  return resnet_v2(inputs, blocks, num_classes, global_pool,
+#                   include_root_block=True, reuse=reuse, scope=scope)
+#
+#
 
 
 

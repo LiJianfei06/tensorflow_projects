@@ -1,0 +1,25 @@
+============准备============：必须在当前目录下
+python read_write_tfrecords.py    生成tfrecord文件
+
+
+
+============训练============:必须在当前目录下
+python tensorflow_train_mynet.py    
+
+
+
+
+============测试============：必须在当前目录下
+python eval_captcha.py    
+
+
+
+
+============监视============:必须在当前目录下
+tensorboard --logdir="logs"
+
+
+
+
+
+

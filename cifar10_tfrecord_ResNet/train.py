@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 
-
-
 import os
 import sys
 import argparse # argparse是python用于解析命令行参数和选项的标准模块，用于代替已经过时的optparse模块。
@@ -17,7 +15,6 @@ import tensorflow as tf
 import random
 import sklearn.preprocessing as prep    # 提供了各种公共函数
 #reload(ResNet)
-
 import collections # 原生的collections库
 import tensorflow as tf
 slim = tf.contrib.slim # 使用方便的contrib.slim库来辅助创建ResNet
@@ -63,10 +60,17 @@ tf.app.flags.DEFINE_string('train_dir', 'train',
 #tf.app.flags.DEFINE_boolean('use_fp16', False,"""Train the model using fp16.""")
                            """train_dir.""")
 
-clear=False #True   # 是否清空从头训练
+clear=True   # 是否清空从头训练
 is_on_subdivisions = True
-subdivisions = 2 
+subdivisions = 1
 subdivisions_batch_size = int(np.ceil(FLAGS.batch_size / subdivisions))
+
+
+
+
+
+
+
 
 """解析rfrecord """
 def read_and_decode(filename,w_h,phase="train"):
@@ -110,22 +114,10 @@ def training(loss,global_step):
     boundaries = [32000, 48000, 64000]
     values = [FLAGS.Initial_learning_rate, FLAGS.Initial_learning_rate/10.0, FLAGS.Initial_learning_rate/100.0,FLAGS.Initial_learning_rate/100.0]
     lr = tf.train.piecewise_constant(global_step, boundaries, values)
-    #train_op = tf.train.AdamOptimizer(lr).minimize(loss)  
-    #train_op = tf.train.MomentumOptimizer(learning_rate=lr,momentum=0.9,use_nesterov=True).minimize(loss)  
-    #print "train_op:",train_op
     
-#    opt = tf.train.MomentumOptimizer(lr, 0.9)
-#    train_op = slim.learning.create_train_op(loss, opt, global_step=global_step)
-##    
-
-
-
-
-
-    #optim  = tf.train.MomentumOptimizer(learning_rate=lr,momentum=0.9,use_nesterov=True) 
-
     opt = tf.train.MomentumOptimizer(lr,momentum=0.9,use_nesterov=True)
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+
     with tf.control_dependencies([tf.group(*update_ops)]):
         #train_op = slim.learning.create_train_op(loss, opt, global_step)
         #train_op = optimizer.minimize(loss)   
@@ -133,15 +125,10 @@ def training(loss,global_step):
     return train_op,lr
 
 
-
-  
 """学习策略"""
 """return:损失"""
 def loss_fun(logits, labels):
-  #print "logits:",logits
-  #print "labels:",labels
   #logits1=tf.reshape(logits, [-1, 10])
-  
   pose_loss = tf.losses.sparse_softmax_cross_entropy(logits=logits, labels=labels)
   #slim.losses.add_loss(pose_loss)                  #will be removed after 2016-12-30.
   tf.losses.add_loss(pose_loss)
@@ -153,23 +140,13 @@ def loss_fun(logits, labels):
   return total_loss2
 
 
-
-
-
-
 """return:top_k_精度(分类)"""
-def top_k_error(logits, labels):
+def top_k_error(logits, labels,k_=1):
     #logits1=tf.reshape(logits, [-1, 10])
     #labels1=tf.reshape(labels, [-1, 10])
-
     #print logits1,labels
-    
-    correct = tf.nn.in_top_k(logits, labels, k=1)
-    return tf.reduce_sum(tf.cast(correct, tf.float32))/FLAGS.batch_size
-
-
-
-
+    correct = tf.nn.in_top_k(logits, labels, k=k_)
+    return tf.reduce_sum(tf.cast(correct, tf.float32))/subdivisions_batch_size
 
 
 """训练"""
@@ -208,8 +185,6 @@ def train_crack_captcha_cnn():
         
         with slim.arg_scope(ResNet.resnet_arg_scope(is_training=is_train)): 
             net, end_points = ResNet.resnet_20(_inputRGB, 10,is_training=is_train,keep_prob=keep_prob)
-            print "net:",net
-            #print "end_points:",end_points
         
         loss=loss_fun(logits=net, labels=_labels)
         print "loss:",loss
@@ -218,53 +193,49 @@ def train_crack_captcha_cnn():
         tf.summary.scalar('loss', loss)
         #tf.summary.scalar('loss_test', loss_test)        
         
-       
-        loss_op = tf.losses.sparse_softmax_cross_entropy(logits=net, labels=_labels)
+        boundaries = [32000, 48000, 64000]
+        values = [FLAGS.Initial_learning_rate, FLAGS.Initial_learning_rate/10.0, FLAGS.Initial_learning_rate/100.0,FLAGS.Initial_learning_rate/100.0]
+        lr = tf.train.piecewise_constant(global_, boundaries, values)
+             
+        opt = tf.train.MomentumOptimizer(lr,momentum=0.9,use_nesterov=True)
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 
-        #optim  = tf.train.AdamOptimizer(0.01)
-        optim  = tf.train.MomentumOptimizer(learning_rate=0.1,momentum=0.9,use_nesterov=True) 
-        grads_vars = optim.compute_gradients(loss_op)
+
+        grads = opt.compute_gradients(loss)
+        #for grad, var in grads:
+        #    print ("grad:",grad)
+        #    print ("var:",var)
 
         # 删掉没梯度的参数, 倒序删除，减少麻烦
-        for i in range(len(grads_vars))[::-1]:
-            if grads_vars[i][0] is None:
-                del grads_vars[i]
-
+        for i in range(len(grads))[::-1]:
+            if grads[i][0] is None:
+                del grads[i]
         # 生成梯度缓存
-        grads_cache = [tf.Variable(np.zeros(t[0].shape.as_list(), np.float32), trainable=False) for t in grads_vars]
+        grads_cache = [tf.Variable(np.zeros(t[0].shape.as_list(), np.float32), trainable=False) for t in grads]
         # 清空梯度缓存op，每一 batch 开始前调用
-        #print "grads_cache:",grads_cache
-        #for gc in grads_cache:
-        #    print "gc:",gc
-        #    print "tf.zeros_like(gc):",tf.zeros_like(gc)
-        #    print "gc.assign(tf.zeros_like(gc)):",gc.assign(tf.zeros_like(gc))
-        #print "[gc.assign(tf.zeros_like(gc)) for gc in grads_cache]:",[gc.assign(tf.zeros_like(gc)) for gc in grads_cache]
-        #temp_aaa = [gc.assign(tf.zeros_like(gc)) for gc in grads_cache]
-        #print "*temp_aaa:",temp_aaa
-
-
-        #clear_grads_cache_op = tf.group([gc.assign(tf.zeros_like(gc)) for gc in grads_cache])
         clear_grads_cache_op = tf.group(*[gc.assign(tf.zeros_like(gc)) for gc in grads_cache])
         # 累积梯度op，累积每个 sub batch 的梯度
         #print "zip(grads_cache, grads_vars):",zip(grads_cache, grads_vars)
-        accumulate_grad_op = tf.group(*[gc.assign_add(gv[0]) for gc, gv in zip(grads_cache, grads_vars)])
+        accumulate_grad_op = tf.group(*[gc.assign_add(gv[0]) for gc, gv in zip(grads_cache, grads)])
         # 求平均梯度，
         mean_grad = [gc/tf.to_float(subdivisions) for gc in grads_cache]
         # 组装梯度列表
-        new_grads_vars = [(g, gv[1]) for g, gv in zip(mean_grad, grads_vars)]
-        # 应用梯度op，累积完所有 sub batch 的梯度后，应用梯度
-        apply_grad_op = optim.apply_gradients(new_grads_vars)
+        new_grads_vars = [(g, gv[1]) for g, gv in zip(mean_grad, grads)]
 
+        apply_gradient_op = opt.apply_gradients(new_grads_vars)#, global_step=global_)
+        #print "grads:",grads
+        #print "apply_gradient_op:",apply_gradient_op
+        #print "*update_ops:",update_ops
+        
+        train_op_new = tf.group(apply_gradient_op,*update_ops) 
+       
 
+        #train_op,lr = training(loss,global_step=global_)
 
-        train_op,lr = training(loss,global_step=global_)
-        #train_op__test,lr_test = training(loss_test,global_step=global_)
         tf.summary.scalar('learning_rate', lr)
-        accuracy = top_k_error(logits=end_points['predictions'] , labels=_labels)
-        #accuracy_test = top_k_error(logits=logits_test, labels=label_batch_test)
+        accuracy = top_k_error(logits=end_points['predictions'] , labels=_labels, k_=1)
         
         tf.summary.scalar('accurate', accuracy) # display accurate in TensorBoard
-        #tf.summary.scalar('accuracy_test', accuracy_test) # display accurate in TensorBoard
 
         image_train = img_batch_train   
         image_test = img_batch_test   
@@ -273,9 +244,7 @@ def train_crack_captcha_cnn():
         
         summary = tf.summary.merge_all()
         
-        saver = tf.train.Saver(max_to_keep=16) 
-        
-        
+        saver = tf.train.Saver(max_to_keep=0) 
         
         #sv = tf.train.Supervisor(logdir=FLAGS.log_dir)
         #sys.exit(0)
@@ -335,27 +304,31 @@ def train_crack_captcha_cnn():
         acc=0
         loss_sum = 0 
         for step in range(init_step,FLAGS.max_steps):
-            #loss_sum = 0 
-            #batch_x, batch_y= sess.run([img_batch_train, label_batch_train])
-            #if is_on_subdivisions:
-            #    sess.run(clear_grads_cache_op) # 每一批开始前需要清空梯度缓存
-            #    sub_loss_sum = 0
-            #    for s in range(subdivisions):
-
-            #        x_sub_batch = batch_x[s * subdivisions_batch_size: (s + 1) * subdivisions_batch_size]
-            #        y_sub_batch = batch_y[s * subdivisions_batch_size: (s + 1) * subdivisions_batch_size]
-            #        #_, learn_lr,loss_ = sess.run([train_op,lr, loss], feed_dict={ _inputRGB:x_sub_batch ,_labels:y_sub_batch,keep_prob: 0.8,is_train:True,global_:step})  
-            #        feed_dict = {_inputRGB: x_sub_batch, _labels: y_sub_batch,keep_prob: 0.8,is_train:True,global_:step}
-            #        _, los = sess.run([accumulate_grad_op, loss_op], feed_dict)
-            #        sub_loss_sum += los
-            #    loss_sum += sub_loss_sum / subdivisions
-            #    sess.run(apply_grad_op) # 梯度累积完成，开始应用梯度
-
+            loss_sum = 0 
             batch_x, batch_y= sess.run([img_batch_train, label_batch_train])
+            if is_on_subdivisions:
+                sess.run(clear_grads_cache_op) # 每一批开始前需要清空梯度缓存
+                sub_loss_sum = 0
+                for s in range(subdivisions):
+
+                    x_sub_batch = batch_x[s * subdivisions_batch_size: (s + 1) * subdivisions_batch_size]
+                    y_sub_batch = batch_y[s * subdivisions_batch_size: (s + 1) * subdivisions_batch_size]
+            #        #_, learn_lr,loss_ = sess.run([train_op,lr, loss], feed_dict={ _inputRGB:x_sub_batch ,_labels:y_sub_batch,keep_prob: 0.8,is_train:True,global_:step})  
+                    feed_dict = {_inputRGB: x_sub_batch, _labels: y_sub_batch,keep_prob: 0.5,is_train:True,global_:step}
+                    _, los = sess.run([accumulate_grad_op, loss], feed_dict)
+                    sub_loss_sum += los
+                loss_sum += sub_loss_sum / subdivisions
+                feed_dict = {_inputRGB: x_sub_batch, _labels: y_sub_batch,keep_prob: 0.5,is_train:True,global_:step}
+                _ = sess.run([train_op_new,lr],feed_dict) # 梯度累积完成，开始应用梯度
+                learn_lr = _[1]
+                #print "_:",_
+
+            #batch_x, batch_y= sess.run([img_batch_train, label_batch_train])
 
             #sys.exit(0)
-            _, learn_lr,loss_ = sess.run([train_op,lr, loss], feed_dict={ _inputRGB:batch_x ,_labels:batch_y,keep_prob: 0.8,is_train:True,global_:step})  
-            
+            #_, learn_lr,loss_ = sess.run([train_op,lr, loss], feed_dict={ _inputRGB:batch_x ,_labels:batch_y,keep_prob: 0.8,is_train:True,global_:step})  
+            #loss_ = sess.run(loss, feed_dict={ _inputRGB:batch_x ,_labels:batch_y,keep_prob: 0.8,is_train:True,global_:step})  
+            #_, = sess.run([train_op_new], feed_dict={ _inputRGB:batch_x ,_labels:batch_y,keep_prob: 0.8,is_train:True,global_:step})  
 
             
             if (step+1) % FLAGS.log_frequency == 0:
@@ -363,30 +336,43 @@ def train_crack_captcha_cnn():
                 total_duration_time+=duration
                 start_time = time.time()
                 
-                print "[%s] ljf-tf-train: Iter:%d/%d (%.1f examples/sec, %.3f sec/%d iters) ,loss=%.5f ,lr=%.5f"%(datetime.now(),(step+1),FLAGS.max_steps,FLAGS.batch_size*FLAGS.log_frequency/duration,duration,FLAGS.log_frequency,loss_,learn_lr)
-                #print "[%s] ljf-tf-train: Iter:%d/%d (%.1f examples/sec, %.3f sec/%d iters) ,loss=%.5f ,lr=%.5f"%(datetime.now(),(step+1),FLAGS.max_steps,FLAGS.batch_size*FLAGS.log_frequency/duration,duration,FLAGS.log_frequency,loss_sum,0.1)
+                #print "[%s] ljf-tf-train: Iter:%d/%d (%.1f examples/sec, %.3f sec/%d iters) ,loss=%.5f ,lr=%.5f"%(datetime.now(),(step+1),FLAGS.max_steps,FLAGS.batch_size*FLAGS.log_frequency/duration,duration,FLAGS.log_frequency,loss_,learn_lr)
+                print "[%s] ljf-tf-train: Iter:%d/%d (%.1f examples/sec, %.3f sec/%d iters) ,loss=%.5f ,lr=%.5f"%(datetime.now(),(step+1),FLAGS.max_steps,FLAGS.batch_size*FLAGS.log_frequency/duration,duration,FLAGS.log_frequency,loss_sum,learn_lr)
             # 每100 step计算一次准确率  
             if (((step+1) % (FLAGS.log_frequency*5)== 0) or (step==0)): 
-                acc=0
+                acc_train=0
                 acc_test=0
                 for i in range(FLAGS.test_num):    #train
                     batch_x, batch_y= sess.run([img_batch_train, label_batch_train])    
-                    acc += sess.run(accuracy, feed_dict={_inputRGB:batch_x ,_labels:batch_y,keep_prob: 1.,is_train:False,global_:step})
-                acc=acc/FLAGS.test_num
+                    sub_acc=0
+                    for s in range(subdivisions):
+                        x_sub_batch = batch_x[s * subdivisions_batch_size: (s + 1) * subdivisions_batch_size]
+                        y_sub_batch = batch_y[s * subdivisions_batch_size: (s + 1) * subdivisions_batch_size]
+                        sub_acc += sess.run(accuracy, feed_dict={_inputRGB:x_sub_batch ,_labels:y_sub_batch,keep_prob: 1.,is_train:False,global_:step})
+
+                    acc_train+=sub_acc/subdivisions
+                    #acc += sess.run(accuracy, feed_dict={_inputRGB:batch_x ,_labels:batch_y,keep_prob: 1.,is_train:False,global_:step})
+                acc_train=acc_train/FLAGS.test_num
                            
                 
-                summary_str = sess.run(summary, feed_dict={_inputRGB:batch_x ,_labels:batch_y,is_train:False,keep_prob: 1.,global_:step})
+                summary_str = sess.run(summary, feed_dict={_inputRGB:x_sub_batch ,_labels:y_sub_batch,is_train:False,keep_prob: 1.,global_:step})       # 训练的tensorboard
                 summary_writer_train.add_summary(summary_str, step)
                 summary_writer_train.flush()
 
                 for i in range(FLAGS.test_num):    #test
                     batch_x, batch_y= sess.run([img_batch_test, label_batch_test]) 
-                    acc_test += sess.run(accuracy, feed_dict={ _inputRGB:batch_x ,_labels:batch_y,keep_prob: 1.,is_train:False,global_:step})
+                    sub_acc=0
+                    for s in range(subdivisions):
+                        x_sub_batch = batch_x[s * subdivisions_batch_size: (s + 1) * subdivisions_batch_size]
+                        y_sub_batch = batch_y[s * subdivisions_batch_size: (s + 1) * subdivisions_batch_size]
+                        sub_acc += sess.run(accuracy, feed_dict={_inputRGB:x_sub_batch ,_labels:y_sub_batch,keep_prob: 1.,is_train:False,global_:step})
+                    #acc_test += sess.run(accuracy, feed_dict={ _inputRGB:batch_x ,_labels:batch_y,keep_prob: 1.,is_train:False,global_:step})
+                    acc_test+=sub_acc/subdivisions
                 acc_test=acc_test/FLAGS.test_num
                 
-                loss_ = sess.run([loss], feed_dict={ _inputRGB:batch_x ,_labels:batch_y,keep_prob: 1,is_train:True,global_:step})  
+                loss_test = sess.run(loss, feed_dict={ _inputRGB:x_sub_batch ,_labels:y_sub_batch,keep_prob: 1,is_train:True,global_:step})   # 测试的tensorboard
                 
-                summary_str = sess.run(summary, feed_dict={_inputRGB:batch_x ,_labels:batch_y,is_train:False,keep_prob: 1.,global_:step})
+                summary_str = sess.run(summary, feed_dict={_inputRGB:x_sub_batch ,_labels:y_sub_batch,is_train:False,keep_prob: 1.,global_:step})
                 summary_writer_test.add_summary(summary_str, step)
                 summary_writer_test.flush()                            
 
@@ -400,8 +386,8 @@ def train_crack_captcha_cnn():
                     checkpoint_file = os.path.join(FLAGS.log_dir, 'model.ckpt')
                     saver.save(sess, checkpoint_file, global_step=step+1)  
 
-                print "[%s] ljf-tf-test : train accuracy:%.4f%%,  test accuracy:%.4f%% ,  max accuracy:%.4f%% , max accuracy step:%d"%(datetime.now(),acc*100,acc_test*100,max_acc*100,max_acc_iter)       
-                print "[%s] ljf-tf-test : test  loss=%.5f,       test time:%.3f sec,     total time:%.3f sec"%(datetime.now(),loss_[0],duration,total_duration_time)
+                print "[%s] ljf-tf-test : train accuracy:%.4f%%,  test accuracy:%.4f%% ,  max accuracy:%.4f%% , max accuracy step:%d"%(datetime.now(),acc_train*100,acc_test*100,max_acc*100,max_acc_iter)       
+                print "[%s] ljf-tf-test : test  loss=%.5f,       test time:%.3f sec,     total time:%.3f sec"%(datetime.now(),loss_test,duration,total_duration_time)
 
             if (step+1) % 10000 == 0 or (step+1)==FLAGS.max_steps: 
                 checkpoint_file = os.path.join(FLAGS.log_dir, 'model.ckpt')
